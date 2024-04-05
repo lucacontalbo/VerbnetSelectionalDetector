@@ -9,6 +9,7 @@ nltk.download('wordnet')
 
 from nltk.corpus import verbnet
 from nltk.corpus import wordnet as wn
+from sklearn.metrics import classification_report
 
 from selrestr import dg
 
@@ -50,7 +51,7 @@ vnselrestr_to_wn = {
     "human": "person"
 }
 
-def get_selectional_restrictions(verb, sense_id):
+def get_selectional_restrictions(verb, sense_id, selrestrs = {}):
     """
     Get selectional restrictions for a given VerbNet sense.
     Args:
@@ -59,8 +60,11 @@ def get_selectional_restrictions(verb, sense_id):
     Returns:
         A dictionary containing selectional restrictions for each argument.
     """
-    selrestrs = {}
-
+    if selrestrs == {}:
+        print()
+        print()
+        print()
+    print(sense_id)
     try:
         vnclass = verbnet.vnclass(sense_id)
     except:
@@ -71,50 +75,78 @@ def get_selectional_restrictions(verb, sense_id):
 
     themroles = verbnet.themroles(vnclass)
     for role in themroles:
-        selrestrs[role["type"]] = []
+        if role["type"] not in selrestrs.keys():
+            selrestrs[role["type"]] = []
+
         for modifier in role["modifiers"]:
+            if modifier["type"] == "refl": continue
             t = vnselrestr_to_wn[modifier["type"]]
             if t == "int_control" or t == "natural":
-                modifier["type"] = t
+                #modifier["type"] = t
+                modifier["type"] = wn.synset("organism.n.01")
             else:
                 modifier["type"] = wn.synset(vnselrestr_to_wn[modifier["type"]]+".n.01")
             selrestrs[role["type"]].append(modifier)
     
+    more_general_ids = sense_id.split("-")[:-1]
+    print(more_general_ids)
+    print(selrestrs)
+    if len(more_general_ids) > 0:
+        for i in reversed(range(0,len(more_general_ids))):
+            new_sense_id = '-'.join(more_general_ids[:i+1])
+            selrestrs = get_selectional_restrictions(verb, new_sense_id, selrestrs)
+    #print(selrestrs)
     return selrestrs
 
+map_to_semantic_type = {
+    "Initial Location": "Location",
+}
+
 semantic_type_list = [
-    "actor",
-    "agent",
-    "asset",
-    "attribute",
-    "beneficiary",
-    "cause",
-    "destination",
-    "location",
-    "experiencer",
-    "instrument",
-    "material",
-    "product",
-    "patient",
-    "predicate",
-    "recipient",
-    "stimulus",
-    "theme",
-    "time",
-    "topic"
+    "Actor",
+    "Agent",
+    "Asset",
+    "Attribute",
+    "Beneficiary",
+    "Cause",
+    "Destination",
+    "Location",
+    "Initial location"
+    "Experiencer",
+    "Instrument",
+    "Material",
+    "Product",
+    "Patient",
+    "Predicate",
+    "Recipient",
+    "Stimulus",
+    "Theme",
+    "Time",
+    "Topic"
 ]
 
 counter_success = 0
 counter_fails = 0
+counter_wn_fails = 0
+
+def get_descendants(synset):
+    descendants = set()
+    for hyponym in synset.hyponyms():
+        descendants.add(hyponym)
+        descendants |= get_descendants(hyponym)
+    return descendants
 
 for i in range(10):
     test_path = f"./data/test{i}.csv"
     test_df = pd.read_csv(test_path)
 
     predictions = []
+    labels = []
+    sentences = []
+    total_arguments = []
+    total_selrestrs = []
 
     for j,row in test_df.iterrows():
-
         row["sentence"] = row["sentence"].replace("'","%27")
         row["sentence"] = row["sentence"].replace(";", ",").strip()
         arguments = []
@@ -140,32 +172,80 @@ for i in range(10):
         
         if prop_index == -1:
             counter_fails += 1
-            print("Error with the following row")
-            print(row["sentence"])
-            print(result)
+            #print("Error with the following row")
+            #print(row["sentence"])
+            #print(result)
             continue
         
         if result["props"][prop_index]["mainEvent"] is not None:
             for arg in result["props"][prop_index]["mainEvent"]["predicates"][0]["args"]:
-                if arg["type"].lower() in semantic_type_list:
+                if arg["type"] in map_to_semantic_type.keys():
+                    arg["type"] = map_to_semantic_type[arg["type"]]
+                if arg["type"] in semantic_type_list:
                     arguments.append((arg["type"], arg["value"]))
-        else:
-            for arg in result["props"][prop_index]["events"][0]["predicates"][0]["args"]:
-                if arg["type"].lower() in semantic_type_list:
+        for event_nbr in range(len(result["props"][prop_index]["events"])):
+            for arg in result["props"][prop_index]["events"][event_nbr]["predicates"][0]["args"]:
+                if arg["type"] in map_to_semantic_type.keys():
+                    arg["type"] = map_to_semantic_type[arg["type"]]
+                if arg["type"] in semantic_type_list:
                     arguments.append((arg["type"], arg["value"]))
+        
+        arguments = list(set(arguments))
 
         sense = result["props"][prop_index]["sense"]
         sense_splitted = sense.split("-")
         verb = sense_splitted[0]
-        id = sense_splitted[1]
-        if len(id.split('.')) > 2:
-            id = '.'.join(id.split('.')[:-1])
+        id = '-'.join(sense_splitted[1:])
+        """if len(id.split('-')) > 2:
+            id = '.'.join(id.split('.')[:-1])"""
 
-        selrestrs = get_selectional_restrictions(verb, id)
+        selrestrs = get_selectional_restrictions(verb, id, {})
         counter_success += 1
-        """print(selrestrs)
-        print(result)
-        print()"""
+
+        for arg in arguments:
+            clash_detected = False
+            if arg[0] not in selrestrs.keys():
+                continue
+
+            wordnet_synset = None
+            for word in arg[1].split():
+                try:
+                    wordnet_synset = wn.synsets(word, pos="n")[0]
+                except:
+                    pass       
+
+            if wordnet_synset is None:
+                counter_wn_fails += 1
+                continue
+
+            for restr in selrestrs[arg[0]]:
+                descendants = get_descendants(restr["type"])
+                if restr["value"] == "+" and wordnet_synset not in descendants:
+                    predictions.append(1)
+                    clash_detected = True
+                    break
+                elif restr["value"] == "-" and wordnet_synset in descendants:
+                    predictions.append(1)
+                    clash_detected = True
+                    break
+
+            if clash_detected:
+                break
+            
+        if not clash_detected:
+            predictions.append(0)
+        labels.append(row["label"])
+        sentences.append(row["sentence"])
+        total_arguments.append(arguments)
+        total_selrestrs.append(selrestrs)
+        #print(f"Final selrestrs {selrestrs}")
+
+    for lab, pred, sent, arg, selr in zip(labels, predictions, sentences, total_arguments, total_selrestrs):
+        if lab != pred:
+            #print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
+            print()
+    print(classification_report(labels, predictions))
+    print(a)
 
 
 print("Fails",counter_fails)

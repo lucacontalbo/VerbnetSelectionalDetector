@@ -13,6 +13,10 @@ from sklearn.metrics import classification_report
 
 from selrestr import dg
 
+from nltk.stem import WordNetLemmatizer
+ 
+lemmatizer = WordNetLemmatizer()
+
 vnselrestr_to_wn = {
     "animate": "living_thing",
     "vehicle": "vehicle",
@@ -41,7 +45,7 @@ vnselrestr_to_wn = {
     "region": "region",
     "place": "place",
     "organization": "organization",
-    "solid": "solid",
+    "solid": "physical_object",
     "rigid": "rigidness",
     "pointy": "rigidness",
     "elongated": "rigidness",
@@ -51,7 +55,7 @@ vnselrestr_to_wn = {
     "human": "person"
 }
 
-def get_selectional_restrictions(verb, sense_id, selrestrs = {}):
+def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
     """
     Get selectional restrictions for a given VerbNet sense.
     Args:
@@ -60,19 +64,20 @@ def get_selectional_restrictions(verb, sense_id, selrestrs = {}):
     Returns:
         A dictionary containing selectional restrictions for each argument.
     """
-    if selrestrs == {}:
-        print()
-        print()
-        print()
-    print(sense_id)
+
     try:
+        print(sense_id)
         vnclass = verbnet.vnclass(sense_id)
     except:
         try:
-            vnclass = verbnet.vnclass(verb)
+            s = sense_id.split(".")[0]
+            vnclass = verbnet.vnclass(s)
         except:
-            return {}
-
+            try:
+                vnclass = verbnet.vnclass(verbnet.classids(lemma=lemmatizer.lemmatize(lemma, pos="v"))[0])
+            except:
+                return {}
+    print()
     themroles = verbnet.themroles(vnclass)
     for role in themroles:
         if role["type"] not in selrestrs.keys():
@@ -89,13 +94,10 @@ def get_selectional_restrictions(verb, sense_id, selrestrs = {}):
             selrestrs[role["type"]].append(modifier)
     
     more_general_ids = sense_id.split("-")[:-1]
-    print(more_general_ids)
-    print(selrestrs)
     if len(more_general_ids) > 0:
         for i in reversed(range(0,len(more_general_ids))):
             new_sense_id = '-'.join(more_general_ids[:i+1])
-            selrestrs = get_selectional_restrictions(verb, new_sense_id, selrestrs)
-    #print(selrestrs)
+            selrestrs = get_selectional_restrictions(verb, new_sense_id, lemma, selrestrs)
     return selrestrs
 
 map_to_semantic_type = {
@@ -172,9 +174,6 @@ for i in range(10):
         
         if prop_index == -1:
             counter_fails += 1
-            #print("Error with the following row")
-            #print(row["sentence"])
-            #print(result)
             continue
         
         if result["props"][prop_index]["mainEvent"] is not None:
@@ -199,9 +198,10 @@ for i in range(10):
         """if len(id.split('-')) > 2:
             id = '.'.join(id.split('.')[:-1])"""
 
-        selrestrs = get_selectional_restrictions(verb, id, {})
+        selrestrs = get_selectional_restrictions(verb, id, row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), {})
         counter_success += 1
 
+        clash_detected = False
         for arg in arguments:
             clash_detected = False
             if arg[0] not in selrestrs.keys():
@@ -212,7 +212,7 @@ for i in range(10):
                 try:
                     wordnet_synset = wn.synsets(word, pos="n")[0]
                 except:
-                    pass       
+                    pass
 
             if wordnet_synset is None:
                 counter_wn_fails += 1
@@ -238,11 +238,10 @@ for i in range(10):
         sentences.append(row["sentence"])
         total_arguments.append(arguments)
         total_selrestrs.append(selrestrs)
-        #print(f"Final selrestrs {selrestrs}")
 
     for lab, pred, sent, arg, selr in zip(labels, predictions, sentences, total_arguments, total_selrestrs):
         if lab != pred:
-            #print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
+            print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
             print()
     print(classification_report(labels, predictions))
     print(a)

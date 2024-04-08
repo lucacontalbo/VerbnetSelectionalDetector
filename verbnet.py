@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import string
 
+import networkx as nx
 import nltk
 nltk.download('verbnet')
 nltk.download('wordnet')
@@ -136,6 +137,16 @@ def get_descendants(synset):
     for hyponym in synset.hyponyms():
         descendants.add(hyponym)
         descendants |= get_descendants(hyponym)
+    
+    root = wn.synset("entity.n.01")
+    descendants_extended = set()
+    for descendant in descendants:
+        descendants_extended.add(descendant)
+        if descendant not in dg:
+            continue
+        for path in nx.all_simple_paths(dg, source=descendant, target=root):
+            for syn in path:
+                descendants_extended.add(syn)
     return descendants
 
 for i in range(10):

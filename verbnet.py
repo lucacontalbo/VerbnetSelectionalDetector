@@ -212,9 +212,12 @@ for i in range(10):
         selrestrs = get_selectional_restrictions(verb, id, row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), {})
         counter_success += 1
 
+        clash_detected_plus = True
+        clash_detected_minus = False
         clash_detected = False
         for arg in arguments:
-            clash_detected = False
+            clash_detected_plus = True
+            clash_detected_minus = False
             if arg[0] not in selrestrs.keys():
                 continue
 
@@ -231,20 +234,18 @@ for i in range(10):
 
             for restr in selrestrs[arg[0]]:
                 descendants = get_descendants(restr["type"])
-                if restr["value"] == "+" and wordnet_synset not in descendants:
-                    predictions.append(1)
-                    clash_detected = True
-                    break
+                if restr["value"] == "+" and wordnet_synset in descendants:
+                    clash_detected_plus = False
                 elif restr["value"] == "-" and wordnet_synset in descendants:
-                    predictions.append(1)
-                    clash_detected = True
-                    break
+                    clash_detected_minus = True
 
-            if clash_detected:
+            if clash_detected_plus or clash_detected_minus:
+                clash_detected = True
                 break
-            
-        if not clash_detected:
-            predictions.append(0)
+        if clash_detected:
+           predictions.append(1)
+        else:
+           predictions.append(0)
         labels.append(row["label"])
         sentences.append(row["sentence"])
         total_arguments.append(arguments)

@@ -24,11 +24,12 @@ vnselrestr_to_wn = {
     "machine": "machine",
     "person": "person",
     "animal": "animal",
-    "body-part": "body_part",
+    "natural": "natural_event",
+    "body_part": "body_part",
     "int_control": "int_control",
-    "natural": "natural",
     "plant": "plant",
     "food": "food",
+    "comestible": "food",
     "garment": "clothing",
     "tool": "tool",
     "artifact": "artifact",
@@ -67,7 +68,6 @@ def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
     """
 
     try:
-        print(sense_id)
         vnclass = verbnet.vnclass(sense_id)
     except:
         try:
@@ -78,7 +78,7 @@ def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
                 vnclass = verbnet.vnclass(verbnet.classids(lemma=lemmatizer.lemmatize(lemma, pos="v"))[0])
             except:
                 return {}
-    print()
+
     themroles = verbnet.themroles(vnclass)
     for role in themroles:
         if role["type"] not in selrestrs.keys():
@@ -87,12 +87,17 @@ def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
         for modifier in role["modifiers"]:
             if modifier["type"] == "refl": continue
             t = vnselrestr_to_wn[modifier["type"]]
-            if t == "int_control" or t == "natural":
+            if t == "int_control":
                 #modifier["type"] = t
-                modifier["type"] = wn.synset("organism.n.01")
+                modifier["type"] = wn.synset("natural_event.n.01")
+                selrestrs[role["type"]].append(modifier.copy())
+                modifier["type"] = wn.synset("living_thing.n.01")
+                selrestrs[role["type"]].append(modifier.copy())
+                modifier["type"] = wn.synset("tool.n.01")
+                selrestrs[role["type"]].append(modifier.copy())
             else:
                 modifier["type"] = wn.synset(vnselrestr_to_wn[modifier["type"]]+".n.01")
-            selrestrs[role["type"]].append(modifier)
+                selrestrs[role["type"]].append(modifier)
     
     more_general_ids = sense_id.split("-")[:-1]
     if len(more_general_ids) > 0:
@@ -127,6 +132,8 @@ semantic_type_list = [
     "Time",
     "Topic"
 ]
+
+pronouns_to_living_thing = ["I", "You", "He", "She", "We", "They"]
 
 counter_success = 0
 counter_fails = 0
@@ -215,16 +222,34 @@ for i in range(10):
         clash_detected_plus = True
         clash_detected_minus = False
         clash_detected = False
+        yay = False
         for arg in arguments:
             clash_detected_plus = True
             clash_detected_minus = False
             if arg[0] not in selrestrs.keys():
                 continue
 
+            if arg[1] == '' or selrestrs[arg[0]] == []:
+                continue
+
             wordnet_synset = None
+            hypernyms = set()
             for word in arg[1].split():
                 try:
-                    wordnet_synset = wn.synsets(word, pos="n")[0]
+                    word = word.translate(str.maketrans('', '', string.punctuation)).strip()
+                    if word in pronouns_to_living_thing:
+                        wordnet_synsets = wn.synsets("person.n.01", pos="n")
+                    else:
+                        wordnet_synsets = wn.synsets(word, pos="n")
+                    if wordnet_synsets is None:
+                        continue
+                    for wordnet_synset in wordnet_synsets:
+                        for path in wordnet_synset.hypernym_paths():
+                            for syn in path:
+                                hypernyms.add(syn)
+                        hypernyms.add(wordnet_synset)
+                    if word == "gasoline":
+                        pass
                 except:
                     pass
 
@@ -232,13 +257,24 @@ for i in range(10):
                 counter_wn_fails += 1
                 continue
 
+            in_plus = 0
+            in_minus = 0
             for restr in selrestrs[arg[0]]:
                 descendants = get_descendants(restr["type"])
-                if restr["value"] == "+" and wordnet_synset in descendants:
+                condition = any([hyp in descendants for hyp in hypernyms])
+                if restr["value"] == "+":
+                    in_plus = 1
+                if restr["value"] == "-":
+                    in_minus = 1
+                if restr["value"] == "+" and condition: #wordnet_synset in descendants:
                     clash_detected_plus = False
-                elif restr["value"] == "-" and wordnet_synset in descendants:
+                elif restr["value"] == "-" and condition:
                     clash_detected_minus = True
 
+            if not in_plus:
+                clash_detected_plus = False
+            if not in_minus:
+                clash_detected_minus = False
             if clash_detected_plus or clash_detected_minus:
                 clash_detected = True
                 break
@@ -252,11 +288,13 @@ for i in range(10):
         total_selrestrs.append(selrestrs)
 
     for lab, pred, sent, arg, selr in zip(labels, predictions, sentences, total_arguments, total_selrestrs):
-        if lab != pred:
+        #if lab != pred:
+        if pred == 1 and lab == 0:
             print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
             print()
     print(classification_report(labels, predictions))
-    print(a)
+    print()
+    #print(a)
 
 
 print("Fails",counter_fails)

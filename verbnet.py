@@ -106,6 +106,10 @@ def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
             selrestrs = get_selectional_restrictions(verb, new_sense_id, lemma, selrestrs)
     return selrestrs
 
+def save_results(predictions, number):
+    with open(f"./predictions/{number}.pkl", "wb") as writer:
+        pkl.dump(writer, predictions)
+
 map_to_semantic_type = {
     "Initial Location": "Location",
 }
@@ -248,13 +252,13 @@ for i in range(10):
                             for syn in path:
                                 hypernyms.add(syn)
                         hypernyms.add(wordnet_synset)
-                    if word == "gasoline":
-                        pass
                 except:
                     pass
 
             if wordnet_synset is None:
                 counter_wn_fails += 1
+                predictions.append(0)
+                labels.append(row["label"])
                 continue
 
             in_plus = 0
@@ -296,6 +300,7 @@ for i in range(10):
     print()
     #print(a)
 
+    save_results(predictions)
 
 print("Fails",counter_fails)
 print("Success",counter_success)

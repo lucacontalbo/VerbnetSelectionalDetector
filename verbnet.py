@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import string
 import pickle as pkl
+import urllib.parse
 
 import networkx as nx
 import nltk
@@ -97,6 +98,15 @@ def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
                 selrestrs[role["type"]].append(modifier.copy())
                 modifier["type"] = wn.synset("tool.n.01")
                 selrestrs[role["type"]].append(modifier.copy())
+                modifier["type"] = wn.synset("vehicle.n.01")
+                selrestrs[role["type"]].append(modifier.copy())
+                modifier["type"] = wn.synset("machine.n.01")
+                selrestrs[role["type"]].append(modifier.copy())
+            elif modifier["type"] == "communication":
+                modifier["type"] = wn.synset("communication.n.01")
+                selrestrs[role["type"]].append(modifier.copy())
+                modifier["type"] = wn.synset("communication.n.02")
+                selrestrs[role["type"]].append(modifier.copy())
             else:
                 modifier["type"] = wn.synset(vnselrestr_to_wn[modifier["type"]]+".n.01")
                 selrestrs[role["type"]].append(modifier)
@@ -139,7 +149,7 @@ semantic_type_list = [
     "Topic"
 ]
 
-pronouns_to_living_thing = ["I", "You", "He", "She", "We", "They", "Who"]
+pronouns_to_living_thing = ["I", "You", "He", "She", "We", "They", "Who", "It"]
 
 counter_success = 0
 counter_fails = 0
@@ -166,18 +176,21 @@ def get_descendants(synset, verbose=False):
                     break"""
     
     if synset in dg:
-        for path in nx.all_simple_paths(dg, source=synset, target=root):
-            for i, syn in enumerate(path):
-                if verbose:
-                    print(synset, syn)
-                descendants.add(syn)
-                if i == 1:
-                    break
+        res = dg.edges(data=True)
+        additional_synsets = set()
+        for u,v,e in res:
+            """print(f"u: {u} \t v: {v} \t e: {e}")"""
+            if isinstance(u,str) or isinstance(synset, str):
+                continue
+            if u == synset and e["type"] == "cooccurrence":
+                additional_synsets.add(v)
+        for syn in additional_synsets:
+            descendants.add(syn)
 
     return descendants
 
 for i in range(10):
-    test_path = f"./data/test{i}.csv"
+    test_path = f"./data/trofi/test{i}.csv"
     test_df = pd.read_csv(test_path)
 
     predictions = []
@@ -190,19 +203,31 @@ for i in range(10):
         row["sentence"] = row["sentence"].replace("'","%27")
         row["sentence"] = row["sentence"].replace(";", ",").strip()
         arguments = []
-        splitted_sentence = '%20'.join(row["sentence"].split())
+        splitted_sentence = urllib.parse.quote('%20'.join(row["sentence"].split()))
 
         command = f"curl -s localhost:8080/predict/semantics?utterance={splitted_sentence} | python -m json.tool"
 
-        result = json.loads(os.popen(command).read())
+        try:
+            result = json.loads(os.popen(command).read())
+        except:
+            counter_fails += 1
+            continue
 
-        if len(result["props"]) == 0:
+        if "props" in result.keys() and len(result["props"]) == 0:
             counter_fails += 1
             predictions.append(0)
             labels.append(row["label"])
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
-            total_selrestrs.append(selrestrs)
+            total_selrestrs.append({})
+            continue
+        elif "props" not in result.keys():
+            counter_fails += 1
+            predictions.append(0)
+            labels.append(row["label"])
+            sentences.append(row["sentence"])
+            total_arguments.append(arguments)
+            total_selrestrs.append({})
             continue
 
         prop_index = -1
@@ -221,7 +246,7 @@ for i in range(10):
             labels.append(row["label"])
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
-            total_selrestrs.append(selrestrs)
+            total_selrestrs.append({})
             continue
         
         if result["props"][prop_index]["mainEvent"] is not None:
@@ -298,6 +323,8 @@ for i in range(10):
             in_plus = 0
             in_minus = 0
             for restr in selrestrs[arg[0]]:
+                if restr["type"] == wn.synset("rigidity.n.01"):
+                    continue
                 descendants = get_descendants(restr["type"], verbose=True)
                 condition = any([hyp in descendants for hyp in hypernyms])
                 condition_minus = any([hyp in descendants for hyp in hypernyms_minus])
@@ -331,11 +358,17 @@ for i in range(10):
         if pred == 1 and lab == 0:
             print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
             print()
+        if pred == 1 and lab == 1:
+            print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
+            print()
+
     print(classification_report(labels, predictions))
     print()
     #print(a)
-
-    save_results(predictions, i)
+    new_p = []
+    for j, sent in enumerate(sentences):
+        new_p.append([sent, predictions[j]])
+    save_results(new_p, i)
 
 print("Fails",counter_fails)
 print("Success",counter_success)

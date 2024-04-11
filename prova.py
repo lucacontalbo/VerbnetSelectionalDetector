@@ -43,7 +43,7 @@ def get_descendants(synset):
     return descendants
 
 
-typ = wn.synsets("police", pos="n")
+typ = wn.synsets("pine", pos="n")
 for t in typ:
     print(t)
     print(t.definition())

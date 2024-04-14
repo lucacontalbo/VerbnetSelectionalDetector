@@ -5,11 +5,13 @@ import string
 import pickle as pkl
 import urllib.parse
 
+import spacy
 import networkx as nx
 import nltk
 nltk.download('verbnet')
 nltk.download('wordnet')
 
+from tqdm import tqdm
 from nltk.corpus import verbnet
 from nltk.corpus import wordnet as wn
 from sklearn.metrics import classification_report
@@ -17,7 +19,9 @@ from sklearn.metrics import classification_report
 from selrestr import dg
 
 from nltk.stem import WordNetLemmatizer
- 
+
+nlp = spacy.load("en_core_web_sm")
+
 lemmatizer = WordNetLemmatizer()
 
 vnselrestr_to_wn = {
@@ -149,7 +153,7 @@ semantic_type_list = [
     "Topic"
 ]
 
-pronouns_to_living_thing = ["I", "You", "He", "She", "We", "They", "Who", "It"]
+pronouns_to_living_thing = ["I", "You", "He", "She", "We", "They", "Who", "It", "Them", "Me", "Him", "Her"]
 
 counter_success = 0
 counter_fails = 0
@@ -199,17 +203,20 @@ for i in range(10):
     total_arguments = []
     total_selrestrs = []
 
-    for j,row in test_df.iterrows():
+    for j,row in tqdm(test_df.iterrows()):
+        doc = nlp(row["sentence"])
         row["sentence"] = row["sentence"].replace("'","%27")
         row["sentence"] = row["sentence"].replace(";", ",").strip()
         arguments = []
-        splitted_sentence = urllib.parse.quote('%20'.join(row["sentence"].split()))
+        splitted_sentence = '%20'.join(row["sentence"].split())
+        """urllib.parse.quote('%20'.join(row["sentence"].split()))"""
 
         command = f"curl -s localhost:8080/predict/semantics?utterance={splitted_sentence} | python -m json.tool"
 
         try:
             result = json.loads(os.popen(command).read())
         except:
+            """print("Error made by the Verbnet parser")"""
             counter_fails += 1
             continue
 
@@ -220,6 +227,7 @@ for i in range(10):
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
             total_selrestrs.append({})
+            """print("Props length is zero")"""
             continue
         elif "props" not in result.keys():
             counter_fails += 1
@@ -228,13 +236,14 @@ for i in range(10):
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
             total_selrestrs.append({})
+            """print("Props is not inside the result")"""
             continue
 
         prop_index = -1
 
         for k, prop in enumerate(result["props"]):
             for span in prop["spans"]:
-                if span["predicate"] == True and span["text"].lower().translate(str.maketrans('', '', string.punctuation)) == row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)):
+                if span["predicate"] == True and lemmatizer.lemmatize(span["text"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v") == lemmatizer.lemmatize(row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"):
                     prop_index = k
                     break
             if prop_index != -1:
@@ -247,6 +256,15 @@ for i in range(10):
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
             total_selrestrs.append({})
+            """print("prop_index not found")
+            print(row["sentence"])
+            print(lemmatizer.lemmatize(row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"))
+            spans = []
+            for prop in result["props"]:
+                for span in prop["spans"]:
+                    spans.append(lemmatizer.lemmatize(span["text"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"))
+            print(spans)"""
+            """print(a)"""
             continue
         
         if result["props"][prop_index]["mainEvent"] is not None:
@@ -287,17 +305,23 @@ for i in range(10):
             if arg[0].lower() == "location" or arg[0].lower() == "destination":
                 continue
 
-            wordnet_synset = None
+            wordnet_synsets = []
             hypernyms = set()
             hypernyms_minus = set()
             for word in arg[1].split():
                 try:
                     word = word.translate(str.maketrans('', '', string.punctuation)).strip()
                     if word.lower() in [p.lower() for p in pronouns_to_living_thing]:
-                        wordnet_synsets = wn.synsets("person.n.01", pos="n")
+                        wordnet_synsets = wn.synsets("person", pos="n")
                     else:
                         wordnet_synsets = wn.synsets(word, pos="n")
-                    if wordnet_synsets is None:
+                    for ent in doc.ents:
+                        if ent.text in arg[1]:
+                            if ent.label_ == "PERSON":
+                                wordnet_synsets.append(wn.synset("person.n.01"))
+                            if ent.label_ == "ORG":
+                                wordnet_synsets.append(wn.synset("organization.n.01"))
+                    if len(wordnet_synsets) == 0:
                         continue
                     for z, wordnet_synset in enumerate(wordnet_synsets):
                         for path in wordnet_synset.hypernym_paths():
@@ -311,8 +335,12 @@ for i in range(10):
                 except:
                     pass
 
-            if wordnet_synset is None:
-                counter_wn_fails += 1
+            if "coffee" in row["sentence"]:
+                print(hypernyms)
+                print(hypernyms_minus)
+                print(a)
+
+            if len(wordnet_synsets) == 0:
                 predictions.append(0)
                 labels.append(row["label"])
                 sentences.append(row["sentence"])
@@ -358,9 +386,9 @@ for i in range(10):
         if pred == 1 and lab == 0:
             print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
             print()
-        if pred == 1 and lab == 1:
+        """if pred == 1 and lab == 1:
             print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
-            print()
+            print()"""
 
     print(classification_report(labels, predictions))
     print()
@@ -369,6 +397,7 @@ for i in range(10):
     for j, sent in enumerate(sentences):
         new_p.append([sent, predictions[j]])
     save_results(new_p, i)
+    print(a)
 
 print("Fails",counter_fails)
 print("Success",counter_success)

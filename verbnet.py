@@ -60,7 +60,8 @@ vnselrestr_to_wn = {
     "nonrigid": "rigidness",
     "substance": "substance",
     "force": "natural_phenomenon",
-    "human": "person"
+    "human": "person",
+    "plural": "entity",
 }
 
 def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
@@ -100,17 +101,22 @@ def get_selectional_restrictions(verb, sense_id, lemma="", selrestrs = {}):
                 selrestrs[role["type"]].append(modifier.copy())
                 modifier["type"] = wn.synset("living_thing.n.01")
                 selrestrs[role["type"]].append(modifier.copy())
-                modifier["type"] = wn.synset("tool.n.01")
-                selrestrs[role["type"]].append(modifier.copy())
-                modifier["type"] = wn.synset("vehicle.n.01")
-                selrestrs[role["type"]].append(modifier.copy())
-                modifier["type"] = wn.synset("machine.n.01")
-                selrestrs[role["type"]].append(modifier.copy())
+                """modifier["type"] = wn.synset("tool.n.01")
+                selrestrs[role["type"]].append(modifier.copy())"""
+                """modifier["type"] = wn.synset("vehicle.n.01")
+                selrestrs[role["type"]].append(modifier.copy())"""
+                """modifier["type"] = wn.synset("machine.n.01")
+                selrestrs[role["type"]].append(modifier.copy())"""
             elif modifier["type"] == "communication":
-                modifier["type"] = wn.synset("communication.n.01")
+                """modifier["type"] = wn.synset("communication.n.01")
                 selrestrs[role["type"]].append(modifier.copy())
                 modifier["type"] = wn.synset("communication.n.02")
+                selrestrs[role["type"]].append(modifier.copy())"""
+                modifier["type"] = wn.synset("entity.n.01")
                 selrestrs[role["type"]].append(modifier.copy())
+                modifier["type"] = wn.synset("entity.n.02")
+                selrestrs[role["type"]].append(modifier.copy())
+
             else:
                 modifier["type"] = wn.synset(vnselrestr_to_wn[modifier["type"]]+".n.01")
                 selrestrs[role["type"]].append(modifier)
@@ -193,8 +199,213 @@ def get_descendants(synset, verbose=False):
 
     return descendants
 
-for i in range(10):
-    test_path = f"./data/trofi/test{i}.csv"
+CV = True
+
+if CV:
+    for i in range(10):
+        test_path = f"./data/trofi/test{i}.csv"
+        test_df = pd.read_csv(test_path)
+
+        predictions = []
+        labels = []
+        sentences = []
+        total_arguments = []
+        total_selrestrs = []
+
+        for j,row in tqdm(test_df.iterrows()):
+            doc = nlp(row["sentence"])
+            row["sentence"] = row["sentence"].replace("'","%27")
+            row["sentence"] = row["sentence"].replace(";", ",").strip()
+            arguments = []
+            splitted_sentence = '%20'.join(row["sentence"].split())
+            """urllib.parse.quote('%20'.join(row["sentence"].split()))"""
+
+            command = f"curl -s localhost:8080/predict/semantics?utterance={splitted_sentence} | python -m json.tool"
+
+            try:
+                result = json.loads(os.popen(command).read())
+            except:
+                """print("Error made by the Verbnet parser")"""
+                counter_fails += 1
+                continue
+
+            if "props" in result.keys() and len(result["props"]) == 0:
+                counter_fails += 1
+                predictions.append(0)
+                labels.append(row["label"])
+                sentences.append(row["sentence"])
+                total_arguments.append(arguments)
+                total_selrestrs.append({})
+                """print("Props length is zero")"""
+                continue
+            elif "props" not in result.keys():
+                counter_fails += 1
+                predictions.append(0)
+                labels.append(row["label"])
+                sentences.append(row["sentence"])
+                total_arguments.append(arguments)
+                total_selrestrs.append({})
+                """print("Props is not inside the result")"""
+                continue
+
+            prop_index = -1
+
+            for k, prop in enumerate(result["props"]):
+                for span in prop["spans"]:
+                    if span["predicate"] == True and lemmatizer.lemmatize(span["text"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v") == lemmatizer.lemmatize(row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"):
+                        prop_index = k
+                        break
+                if prop_index != -1:
+                    break
+            
+            if prop_index == -1:
+                counter_fails += 1
+                predictions.append(0)
+                labels.append(row["label"])
+                sentences.append(row["sentence"])
+                total_arguments.append(arguments)
+                total_selrestrs.append({})
+                """print("prop_index not found")
+                print(row["sentence"])
+                print(lemmatizer.lemmatize(row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"))
+                spans = []
+                for prop in result["props"]:
+                    for span in prop["spans"]:
+                        spans.append(lemmatizer.lemmatize(span["text"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"))
+                print(spans)"""
+                """print(a)"""
+                continue
+            
+            if result["props"][prop_index]["mainEvent"] is not None:
+                for arg in result["props"][prop_index]["mainEvent"]["predicates"][0]["args"]:
+                    if arg["type"] in map_to_semantic_type.keys():
+                        arg["type"] = map_to_semantic_type[arg["type"]]
+                    if arg["type"] in semantic_type_list:
+                        arguments.append((arg["type"], arg["value"]))
+            for event_nbr in range(len(result["props"][prop_index]["events"])):
+                for arg in result["props"][prop_index]["events"][event_nbr]["predicates"][0]["args"]:
+                    if arg["type"] in map_to_semantic_type.keys():
+                        arg["type"] = map_to_semantic_type[arg["type"]]
+                    if arg["type"] in semantic_type_list:
+                        arguments.append((arg["type"], arg["value"]))
+            
+            arguments = list(set(arguments))
+
+            sense = result["props"][prop_index]["sense"]
+            sense_splitted = sense.split("-")
+            verb = sense_splitted[0]
+            id = '-'.join(sense_splitted[1:])
+
+            selrestrs = get_selectional_restrictions(verb, id, row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), {})
+            counter_success += 1
+
+            clash_detected_plus = True
+            clash_detected_minus = False
+            clash_detected = False
+            for arg in arguments:
+                clash_detected_plus = True
+                clash_detected_minus = False
+                if arg[0] not in selrestrs.keys():
+                    continue
+
+                if arg[1] == '' or selrestrs[arg[0]] == []:
+                    continue
+
+                if arg[0].lower() == "location" or arg[0].lower() == "destination":
+                    continue
+
+                wordnet_synsets = []
+                hypernyms = set()
+                hypernyms_minus = set()
+                for word in arg[1].split():
+                    try:
+                        word = word.translate(str.maketrans('', '', string.punctuation)).strip()
+                        if word.lower() in [p.lower() for p in pronouns_to_living_thing]:
+                            wordnet_synsets = wn.synsets("person", pos="n")
+                        else:
+                            wordnet_synsets = wn.synsets(word, pos="n")
+                        for ent in doc.ents:
+                            if ent.text in arg[1]:
+                                if ent.label_ == "PERSON":
+                                    wordnet_synsets.append(wn.synset("person.n.01"))
+                                """if ent.label_ == "ORG":
+                                    wordnet_synsets.append(wn.synset("organization.n.01"))"""
+                                pass
+                        if len(wordnet_synsets) == 0:
+                            continue
+                        for z, wordnet_synset in enumerate(wordnet_synsets):
+                            for path in wordnet_synset.hypernym_paths():
+                                for syn in path:
+                                    if z == 0:
+                                        hypernyms_minus.add(syn)
+                                    hypernyms.add(syn)
+                            if z == 0:
+                                hypernyms_minus.add(wordnet_synset)
+                            hypernyms.add(wordnet_synset)
+                    except:
+                        pass
+
+                if len(wordnet_synsets) == 0:
+                    predictions.append(0)
+                    labels.append(row["label"])
+                    sentences.append(row["sentence"])
+                    total_arguments.append(arguments)
+                    total_selrestrs.append(selrestrs)
+                    continue
+
+                in_plus = 0
+                in_minus = 0
+                for restr in selrestrs[arg[0]]:
+                    if restr["type"] == wn.synset("rigidity.n.01"):
+                        continue
+                    descendants = get_descendants(restr["type"], verbose=True)
+                    condition = any([hyp in descendants for hyp in hypernyms])
+                    condition_minus = any([hyp in descendants for hyp in hypernyms_minus])
+                    if restr["value"] == "+":
+                        in_plus = 1
+                    if restr["value"] == "-":
+                        in_minus = 1
+                    if restr["value"] == "+" and condition: #wordnet_synset in descendants:
+                        clash_detected_plus = False
+                    elif restr["value"] == "-" and condition_minus:
+                        clash_detected_minus = True
+
+                if not in_plus:
+                    clash_detected_plus = False
+                if not in_minus:
+                    clash_detected_minus = False
+                if clash_detected_plus or clash_detected_minus:
+                    clash_detected = True
+                    break
+            if clash_detected:
+                predictions.append(1)
+            else:
+                predictions.append(0)
+            labels.append(row["label"])
+            sentences.append(row["sentence"])
+            total_arguments.append(arguments)
+            total_selrestrs.append(selrestrs)
+
+        for lab, pred, sent, arg, selr in zip(labels, predictions, sentences, total_arguments, total_selrestrs):
+            #if lab != pred:
+            if pred == 1 and lab == 1:
+                print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
+                print()
+            """if pred == 1 and lab == 1:
+                print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg} --- Selrestrs: {selr}")
+                print()"""
+
+        print(classification_report(labels, predictions))
+        print()
+        #print(a)
+        new_p = []
+        for j, sent in enumerate(sentences):
+            new_p.append([sent, predictions[j]])
+        save_results(new_p, i)
+        print(a)
+
+else:
+    test_path = f"./data/vuaverb/test.csv"
     test_df = pd.read_csv(test_path)
 
     predictions = []
@@ -205,18 +416,21 @@ for i in range(10):
 
     for j,row in tqdm(test_df.iterrows()):
         doc = nlp(row["sentence"])
-        row["sentence"] = row["sentence"].replace("'","%27")
+        """row["sentence"] = row["sentence"].replace("'","%27")
         row["sentence"] = row["sentence"].replace(";", ",").strip()
         arguments = []
-        splitted_sentence = '%20'.join(row["sentence"].split())
-        """urllib.parse.quote('%20'.join(row["sentence"].split()))"""
+        splitted_sentence = '%20'.join(row["sentence"].split())"""
+        arguments = []
+        splitted_sentence = urllib.parse.quote(row["sentence"].replace(";", ",").strip(), safe='/', encoding=None, errors=None)
 
         command = f"curl -s localhost:8080/predict/semantics?utterance={splitted_sentence} | python -m json.tool"
 
         try:
             result = json.loads(os.popen(command).read())
         except:
-            """print("Error made by the Verbnet parser")"""
+            print("Error made by the Verbnet parser")
+            print(command)
+            print(a)
             counter_fails += 1
             continue
 
@@ -227,7 +441,7 @@ for i in range(10):
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
             total_selrestrs.append({})
-            """print("Props length is zero")"""
+            print("Props length is zero")
             continue
         elif "props" not in result.keys():
             counter_fails += 1
@@ -236,16 +450,22 @@ for i in range(10):
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
             total_selrestrs.append({})
-            """print("Props is not inside the result")"""
+            print("Props is not inside the result")
             continue
 
         prop_index = -1
 
         for k, prop in enumerate(result["props"]):
             for span in prop["spans"]:
-                if span["predicate"] == True and lemmatizer.lemmatize(span["text"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v") == lemmatizer.lemmatize(row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"):
+                if span["predicate"] == True and lemmatizer.lemmatize(span["text"].split()[0].lower().translate(str.maketrans('', '', string.punctuation)), pos="v") == lemmatizer.lemmatize(row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"):
                     prop_index = k
                     break
+                """elif span["predicate"]:
+                    print(result)
+                    print(f"Span: {span['text'].lower().translate(str.maketrans('', '', string.punctuation))}")
+                    print(f"Span lemmatized: {lemmatizer.lemmatize(span['text'].lower().translate(str.maketrans('', '', string.punctuation)), pos='v')}")
+                    print(f"Row target: {row['target_word'].lower().translate(str.maketrans('', '', string.punctuation))}")
+                    print(f"Row target lemmatized: {lemmatizer.lemmatize(row['target_word'].lower().translate(str.maketrans('', '', string.punctuation)), pos='v')}")"""
             if prop_index != -1:
                 break
         
@@ -256,8 +476,8 @@ for i in range(10):
             sentences.append(row["sentence"])
             total_arguments.append(arguments)
             total_selrestrs.append({})
-            """print("prop_index not found")
-            print(row["sentence"])
+            print("prop_index not found")
+            """print(row["sentence"])
             print(lemmatizer.lemmatize(row["target_word"].lower().translate(str.maketrans('', '', string.punctuation)), pos="v"))
             spans = []
             for prop in result["props"]:
@@ -335,11 +555,6 @@ for i in range(10):
                 except:
                     pass
 
-            if "coffee" in row["sentence"]:
-                print(hypernyms)
-                print(hypernyms_minus)
-                print(a)
-
             if len(wordnet_synsets) == 0:
                 predictions.append(0)
                 labels.append(row["label"])
@@ -396,8 +611,8 @@ for i in range(10):
     new_p = []
     for j, sent in enumerate(sentences):
         new_p.append([sent, predictions[j]])
-    save_results(new_p, i)
-    print(a)
+    save_results(new_p, 0)
+
 
 print("Fails",counter_fails)
 print("Success",counter_success)

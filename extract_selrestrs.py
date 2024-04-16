@@ -18,7 +18,7 @@ from selrestr import dg
 from nltk.stem import WordNetLemmatizer
 from sklearn.metrics import classification_report
 
-#from rules.saved_trofi_train.rules0 import rules
+from rules.saved_vuaverb_train.rules import rules
 
 
 def get_rules(selrestrs):
@@ -130,13 +130,13 @@ nlp = spacy.load("en_core_web_sm")
 
 lemmatizer = WordNetLemmatizer()
 
-path = "./data/trofi/"
+path = "./data/vuaverb/"
 counter_fails = 0
-selrestrs = {}
 for num in range(10):
-    #if "rules" not in globals():
+    if "rules" not in globals():
+        selrestrs = {}
 
-        file = f"train{num}.csv"
+        file = f"train.csv" #{num}.csv"
         if file.split(".")[-1] != "csv" or "train" not in file.split(".")[0]:
             continue
         print(f"reading file {file}")
@@ -252,10 +252,10 @@ for num in range(10):
                             selrestrs[target_word]["literal"].append((sem_type_to_add, type_to_add))
 
         rules = get_rules(selrestrs)
-        with open(f"rules/saved_trofi_train/rules{num}.txt", "w") as writer:
+        with open(f"rules/saved_vuaverb_train/rules{num}.txt", "w") as writer:
             print(rules, file=writer)
-
-        file = f"test{num}.csv"
+    else:
+        file = f"test.csv" #{num}.csv"
         if file.split(".")[-1] != "csv" or "test" not in file.split(".")[0]:
             continue
         print(f"reading file {file}")
@@ -348,8 +348,8 @@ for num in range(10):
                 total_arguments.append([])
                 continue
 
-            if target_word not in selrestrs.keys():
-                selrestrs[target_word] = {"metaphor": [], "literal": []}
+            """if target_word not in selrestrs.keys():
+                selrestrs[target_word] = {"metaphor": [], "literal": []}"""
 
             found = False
             for arg in arguments:
@@ -416,7 +416,7 @@ for num in range(10):
                 print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg}")
                 print()
 
-        with open(f"predictions/trofi/{num}.pkl", "wb") as writer:
+        with open(f"predictions/vuaverb/{num}.pkl", "wb") as writer:
             pickle.dump(predictions, writer)
 
         print(classification_report(labels, predictions))

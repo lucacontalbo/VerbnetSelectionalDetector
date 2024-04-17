@@ -412,9 +412,9 @@ for num in range(10):
 
         for lab, pred, sent, arg in zip(labels, predictions, texts, total_arguments):
             #if lab != pred:
-            if pred == 1 and lab == 0:
+            """if pred == 1 and lab == 0:
                 print(f"Sentence: {sent} --- Prediction: {pred} --- Label: {lab} --- Arguments: {arg}")
-                print()
+                print()"""
 
         with open(f"predictions/vuaverb/{num}.pkl", "wb") as writer:
             pickle.dump(predictions, writer)
